@@ -1,0 +1,33 @@
+name: ASPM CI
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 0 * * *' # Se ejecuta todos los días a medianoche para actualizar datos
+
+jobs:
+  aspm:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install Trivy
+        run: |
+          wget https://github.com/aquasecurity/trivy/releases/download/v0.76.0/trivy_0.76.0_Linux-64bit.tar.gz
+          tar zxvf trivy_0.76.0_Linux-64bit.tar.gz
+          sudo mv trivy /usr/local/bin/
+
+      - name: Run Trivy (generate JSON)
+        run: trivy fs --scanners vuln --format json --output trivy_results.json . || true
+
+      - name: Fetch EPSS & KEV
+        run: python aspm/fetch_sources.py
+      
+      - name: Prioritize Vulnerabilities
+        run: python aspm/prioritize.py

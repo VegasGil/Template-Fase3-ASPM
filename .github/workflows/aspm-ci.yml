@@ -25,7 +25,7 @@ jobs:
 
       # Escaneamos la carpeta sample-app con Trivy
       - name: Run Trivy (generate JSON)
-        run: trivy fs --scanners vuln --format json --output trivy_results.json sample-app/ || true
+        run: trivy fs --scanners vuln --format json --output trivy_results.json sample-app/package.json || true
 
       - name: Fetch EPSS & KEV
         run: python aspm/fetch_sources.py

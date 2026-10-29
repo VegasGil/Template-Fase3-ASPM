@@ -1,6 +1,7 @@
 import json
 import os
 import urllib.request
+import ssl
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -12,7 +13,7 @@ SEVERITY_WEIGHT = {"CRITICAL": 10, "HIGH": 7, "MEDIUM": 4, "LOW": 1, "UNKNOWN": 
 
 def load_json(path):
     if not path.exists():
-        raise SystemExit(f"Falta {path}. Ejecuta fetch_sources.py o genera el reporte de Trivy.")
+        raise SystemExit(f"❌ Falta el archivo {path}.")
     return json.loads(path.read_text(encoding="utf-8-sig"))
 
 def calculate_risk(severity: str, epss: float, in_kev: bool) -> float:
@@ -33,26 +34,21 @@ def send_to_splunk(findings):
     print("[*] Enviando resultados priorizados a Splunk...")
     url = f"https://{splunk_host}:8088/services/collector/event"
     
-    # Enviamos solo las top 5 para no saturar en la prueba
+    context = ssl._create_unverified_context()
+    
     for f in findings[:5]:
-        payload = {
-            "event": f,
-            "sourcetype": "aspm_prioritized"
-        }
-        
+        payload = {"event": f, "sourcetype": "aspm_prioritized"}
         req = urllib.request.Request(url, method="POST")
         req.add_header("Authorization", f"Splunk {splunk_token}")
         req.add_header("Content-Type", "application/json")
-        
-        # Ignorar advertencias de SSL (en producción usar certificados válidos)
-        import ssl
-        context = ssl._create_unverified_context()
         
         try:
             with urllib.request.urlopen(req, data=json.dumps(payload).encode(), context=context) as response:
                 pass
         except Exception as e:
             print(f"❌ Error enviando a Splunk: {e}")
+            
+    print("✅ Envío a Splunk finalizado.")
 
 def main():
     print("[*] Cargando datos de EPSS y KEV...")
@@ -63,7 +59,15 @@ def main():
     trivy_data = load_json(TRIVY_JSON)
 
     findings = []
-    for result in trivy_data.get("Results", []):
+    
+    # DEPURACIÓN: Vemos si Trivy encontró algo
+    results = trivy_data.get("Results", [])
+    print(f"[*] Trivy analizó {len(results)} archivos/entornos.")
+    
+    if len(results) == 0:
+        print("⚠️ Trivy no encontró archivos (¿subiste el package.json?).")
+        
+    for result in results:
         for vuln in result.get("Vulnerabilities", []):
             cve = vuln.get("VulnerabilityID")
             pkg = vuln.get("PkgName")
@@ -82,11 +86,14 @@ def main():
     findings.sort(key=lambda x: x["risk_score"], reverse=True)
 
     print("\n=== RANKING DE RIESGO (ASPM) ===\n")
-    print(f"{'CVE':<16} | {'Paquete':<12} | {'Sev':<8} | {'EPSS':<6} | {'KEV':<3} | {'Risk':<4}")
-    print("-" * 65)
-    for f in findings:
-        kev_str = "SÍ" if f["kev"] else "no"
-        print(f"{f['cve']:<16} | {f['package']:<12} | {f['severity']:<8} | {f['epss']:<6.3f} | {kev_str:<3} | {f['risk_score']:<4.1f}")
+    if len(findings) == 0:
+        print("No hay vulnerabilidades para mostrar.")
+    else:
+        print(f"{'CVE':<16} | {'Paquete':<12} | {'Sev':<8} | {'EPSS':<6} | {'KEV':<3} | {'Risk':<4}")
+        print("-" * 65)
+        for f in findings:
+            kev_str = "SÍ" if f["kev"] else "no"
+            print(f"{f['cve']:<16} | {f['package']:<12} | {f['severity']:<8} | {f['epss']:<6.3f} | {kev_str:<3} | {f['risk_score']:<4.1f}")
 
     if findings:
         send_to_splunk(findings)

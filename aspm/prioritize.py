@@ -1,4 +1,6 @@
 import json
+import os
+import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -10,7 +12,7 @@ SEVERITY_WEIGHT = {"CRITICAL": 10, "HIGH": 7, "MEDIUM": 4, "LOW": 1, "UNKNOWN": 
 
 def load_json(path):
     if not path.exists():
-        raise SystemExit(f"Falta {path}.")
+        raise SystemExit(f"Falta {path}. Ejecuta fetch_sources.py o genera el reporte de Trivy.")
     return json.loads(path.read_text(encoding="utf-8-sig"))
 
 def calculate_risk(severity: str, epss: float, in_kev: bool) -> float:
@@ -18,6 +20,39 @@ def calculate_risk(severity: str, epss: float, in_kev: bool) -> float:
     epss_score = epss * 10
     kev_bonus = 20 if in_kev else 0
     return base + epss_score + kev_bonus
+
+def send_to_splunk(findings):
+    """Envía las vulnerabilidades priorizadas a Splunk vía HTTP Event Collector."""
+    splunk_host = os.environ.get("SPLUNK_HOST")
+    splunk_token = os.environ.get("SPLUNK_TOKEN")
+    
+    if not splunk_host or not splunk_token:
+        print("⚠️ No se configuraron SPLUNK_HOST o SPLUNK_TOKEN. Saltando envío a SIEM.")
+        return
+
+    print("[*] Enviando resultados priorizados a Splunk...")
+    url = f"https://{splunk_host}:8088/services/collector/event"
+    
+    # Enviamos solo las top 5 para no saturar en la prueba
+    for f in findings[:5]:
+        payload = {
+            "event": f,
+            "sourcetype": "aspm_prioritized"
+        }
+        
+        req = urllib.request.Request(url, method="POST")
+        req.add_header("Authorization", f"Splunk {splunk_token}")
+        req.add_header("Content-Type", "application/json")
+        
+        # Ignorar advertencias de SSL (en producción usar certificados válidos)
+        import ssl
+        context = ssl._create_unverified_context()
+        
+        try:
+            with urllib.request.urlopen(req, data=json.dumps(payload).encode(), context=context) as response:
+                pass
+        except Exception as e:
+            print(f"❌ Error enviando a Splunk: {e}")
 
 def main():
     print("[*] Cargando datos de EPSS y KEV...")
@@ -52,6 +87,9 @@ def main():
     for f in findings:
         kev_str = "SÍ" if f["kev"] else "no"
         print(f"{f['cve']:<16} | {f['package']:<12} | {f['severity']:<8} | {f['epss']:<6.3f} | {kev_str:<3} | {f['risk_score']:<4.1f}")
+
+    if findings:
+        send_to_splunk(findings)
 
 if __name__ == "__main__":
     main()

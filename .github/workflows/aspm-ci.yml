@@ -3,8 +3,8 @@ name: ASPM CI
 on:
   push:
     branches: [main]
-  schedule:
-    - cron: '0 0 * * *' # Se ejecuta todos los días a medianoche para actualizar datos
+  pull_request:
+    branches: [main]
 
 jobs:
   aspm:
@@ -23,11 +23,15 @@ jobs:
           tar zxvf trivy_0.76.0_Linux-64bit.tar.gz
           sudo mv trivy /usr/local/bin/
 
+      # Escaneamos la carpeta sample-app con Trivy
       - name: Run Trivy (generate JSON)
-        run: trivy fs --scanners vuln --format json --output trivy_results.json . || true
+        run: trivy fs --scanners vuln --format json --output trivy_results.json sample-app/ || true
 
       - name: Fetch EPSS & KEV
         run: python aspm/fetch_sources.py
       
       - name: Prioritize Vulnerabilities
+        env:
+          SPLUNK_HOST: ${{ secrets.SPLUNK_HOST }}
+          SPLUNK_TOKEN: ${{ secrets.SPLUNK_TOKEN }}  # Asegúrate de tener este secreto en el repo
         run: python aspm/prioritize.py

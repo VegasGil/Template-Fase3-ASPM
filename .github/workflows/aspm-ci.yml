@@ -17,15 +17,28 @@ jobs:
         with:
           python-version: '3.12'
 
+      # 1. Instalamos Node.js para poder procesar el package.json
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # 2. Instalamos las dependencias (esto genera el package-lock.json que Trivy necesita)
+      - name: Install dependencies
+        run: |
+          cd sample-app
+          npm install
+
+      # 3. Instalamos Trivy
       - name: Install Trivy
         run: |
           wget https://github.com/aquasecurity/trivy/releases/download/v0.76.0/trivy_0.76.0_Linux-64bit.tar.gz
           tar zxvf trivy_0.76.0_Linux-64bit.tar.gz
           sudo mv trivy /usr/local/bin/
 
-      # Escaneamos la carpeta sample-app con Trivy
+      # 4. Escaneamos la carpeta (ahora que tiene el lockfile, Trivy sí verá las vulnerabilidades)
       - name: Run Trivy (generate JSON)
-        run: trivy fs --scanners vuln --format json --output trivy_results.json sample-app/package.json || true
+        run: trivy fs --scanners vuln --format json --output trivy_results.json sample-app/ || true
 
       - name: Fetch EPSS & KEV
         run: python aspm/fetch_sources.py
@@ -33,5 +46,5 @@ jobs:
       - name: Prioritize Vulnerabilities
         env:
           SPLUNK_HOST: ${{ secrets.SPLUNK_HOST }}
-          SPLUNK_TOKEN: ${{ secrets.SPLUNK_TOKEN }}  # Asegúrate de tener este secreto en el repo
+          SPLUNK_TOKEN: ${{ secrets.SPLUNK_TOKEN }}
         run: python aspm/prioritize.py
